@@ -1930,3 +1930,90 @@ input::placeholder {
   color: var(--muted);
   flex-shrink: 0;
 }
+
+/* ===== Chat Box ===== */
+.chatbox {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+}
+
+.chatbox-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+  min-height: 60px;
+  max-height: 200px;
+}
+
+.chatbox-empty {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 20px 0;
+}
+
+.chat-message {
+  display: flex;
+}
+
+.chat-message.mine {
+  justify-content: flex-end;
+}
+
+.chat-bubble {
+  max-width: 85%;
+  background: var(--surface-3);
+  border-radius: 12px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+}
+
+.chat-message.mine .chat-bubble {
+  background: rgba(74, 163, 255, 0.15);
+  border: 1px solid rgba(74, 163, 255, 0.2);
+}
+
+.chat-sender {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+
+.chat-text {
+  color: var(--text);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.chat-ts {
+  font-size: 0.6rem;
+  color: var(--muted);
+  text-align: right;
+  margin-top: 2px;
+}
+
+.chatbox-input-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.chat-input {
+  flex: 1;
+  margin-bottom: 0;
+  font-size: 0.82rem;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.chat-send-btn {
+  flex-shrink: 0;
+}

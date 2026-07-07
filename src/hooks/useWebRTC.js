@@ -77,6 +77,11 @@ export function useWebRTC() {
           }
         });
         addToast(`Comment on ${msg.fileName}: ${msg.text}`, '');
+      } else if (msg.type === 'chat') {
+        dispatch({
+          type: 'ADD_CHAT_MESSAGE',
+          payload: { text: msg.text, from: msg.from, ts: msg.ts || Date.now() },
+        });
       }
     } catch { }
   }, [dispatch, addToast]);
@@ -497,6 +502,19 @@ export function useWebRTC() {
     await startFileSend(file, transfer.targetPeerId, transfer.name, transfer.note);
   }, [startFileSend]);
 
+  const sendChat = useCallback((text) => {
+    if (!text?.trim()) return;
+    for (const [peerId, peer] of peersRef.current) {
+      if (peer.channel?.readyState === 'open' && !peer.cancelled) {
+        peer.channel.send(JSON.stringify({ type: 'chat', text: text.trim(), from: state.myId, ts: Date.now() }));
+      }
+    }
+    dispatch({
+      type: 'ADD_CHAT_MESSAGE',
+      payload: { text: text.trim(), from: state.myId, ts: Date.now() },
+    });
+  }, [peersRef, state.myId, dispatch]);
+
   const broadcastToAll = useCallback(async (files) => {
     const connectedPeers = [];
     for (const [peerId, peer] of peersRef.current) {
@@ -515,5 +533,5 @@ export function useWebRTC() {
     }
   }, [startFileSend, addToast, peersRef]);
 
-  return { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll, sendComment };
+  return { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll, sendComment, sendChat };
 }

@@ -63,6 +63,7 @@ const initialState = {
   sharedHistory: [],
   pendingRename: null,
   linkExpiry: 60,
+  chatMessages: [],
 };
 
 function reducer(state, action) {
@@ -248,6 +249,8 @@ function reducer(state, action) {
     }
     case 'SET_LINK_EXPIRY':
       return { ...state, linkExpiry: action.payload };
+    case 'ADD_CHAT_MESSAGE':
+      return { ...state, chatMessages: [...state.chatMessages, action.payload].slice(-200) };
     default:
       return state;
   }

@@ -10,10 +10,11 @@ import ThemeToggle from './ThemeToggle';
 import RenameDialog from './RenameDialog';
 import ActivityFeed from './ActivityFeed';
 import SharedHistory from './SharedHistory';
+import ChatBox from './ChatBox';
 
 export default function RoomView() {
   const { state, dispatch, send, addToast, setConfirm, toggleTheme, startLatencyCheck } = useApp();
-  const { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll, sendComment } = useWebRTC();
+  const { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll, sendComment, sendChat } = useWebRTC();
   const [showQR, setShowQR] = useState(false);
   const qrCanvasRef = useRef(null);
   const [roomExpiry, setRoomExpiry] = useState(900);
@@ -235,6 +236,7 @@ export default function RoomView() {
         <div className="side-panel">
           <PeerList onComment={sendComment} onSendTo={handleFilesFromUploadToPeer} />
           <ReceivedList onComment={sendComment} />
+          <ChatBox onSend={sendChat} />
           <ActivityFeed />
           <SharedHistory />
         </div>
