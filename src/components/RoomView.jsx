@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { useWebRTC } from '../hooks/useWebRTC';
-import { generateQR } from '../utils/qrcode';
+import QRCode from 'qrcode';
 import FileUpload from './FileUpload';
 import TransferList from './TransferList';
 import PeerList from './PeerList';
@@ -12,7 +12,7 @@ export default function RoomView() {
   const { state, dispatch, send, addToast, setConfirm, toggleTheme, startLatencyCheck } = useApp();
   const { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll } = useWebRTC();
   const [showQR, setShowQR] = useState(false);
-  const [qrData, setQrData] = useState('');
+  const qrCanvasRef = useRef(null);
   const [filterText, setFilterText] = useState('');
   const [roomExpiry, setRoomExpiry] = useState(900);
   const fileInputRef = useRef(null);
@@ -42,8 +42,12 @@ export default function RoomView() {
   }, [dispatch]);
 
   useEffect(() => {
-    if (showQR && state.currentRoom) {
-      setQrData(generateQR(`${location.origin}?room=${state.currentRoom}`, 240));
+    if (showQR && state.currentRoom && qrCanvasRef.current) {
+      QRCode.toCanvas(qrCanvasRef.current, `${location.origin}?room=${state.currentRoom}`, {
+        width: 240,
+        margin: 2,
+        color: { dark: '#000000', light: '#ffffff' },
+      });
     }
   }, [showQR, state.currentRoom]);
 
@@ -222,7 +226,7 @@ export default function RoomView() {
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowQR(false)}>
           <div className="modal modal-center">
             <h3>Scan to Join Room</h3>
-            {qrData && <img src={qrData} alt="QR Code" className="qr-image" />}
+            <canvas ref={qrCanvasRef} className="qr-image" />
             <p className="qr-hint">Scan with your phone camera to join</p>
             <button onClick={() => setShowQR(false)} className="btn small">Close</button>
           </div>
