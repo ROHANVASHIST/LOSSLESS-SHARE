@@ -9,6 +9,7 @@ const ICONS = {
   'peer-connected': '\u2705',
   'peer-disconnected': '\u26A0',
   room: '\uD83C\uDFE0',
+  chat: '\uD83D\uDCAC',
 };
 
 export default function ActivityFeed() {

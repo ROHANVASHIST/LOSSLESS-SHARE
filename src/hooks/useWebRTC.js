@@ -82,6 +82,12 @@ export function useWebRTC() {
           type: 'ADD_CHAT_MESSAGE',
           payload: { text: msg.text, from: msg.from, ts: msg.ts || Date.now() },
         });
+        dispatch({
+          type: 'ADD_ACTIVITY',
+          payload: { type: 'chat', text: `💬 ${msg.text}`, peerId: msg.from },
+        });
+        addToast(`💬 ${msg.from?.slice(0, 6)}: ${msg.text}`, '');
+        sendBrowserNotification('FlashShare Chat', `${msg.from?.slice(0, 6)}: ${msg.text}`);
       }
     } catch { }
   }, [dispatch, addToast]);
@@ -503,17 +509,24 @@ export function useWebRTC() {
   }, [startFileSend]);
 
   const sendChat = useCallback((text) => {
-    if (!text?.trim()) return;
-    for (const [peerId, peer] of peersRef.current) {
+    if (!text?.trim() || !state.myId) return;
+    const payload = JSON.stringify({ type: 'chat', text: text.trim(), from: state.myId, ts: Date.now() });
+    let sent = 0;
+    for (const [, peer] of peersRef.current) {
       if (peer.channel?.readyState === 'open' && !peer.cancelled) {
-        peer.channel.send(JSON.stringify({ type: 'chat', text: text.trim(), from: state.myId, ts: Date.now() }));
+        try { peer.channel.send(payload); sent++; } catch {}
       }
     }
     dispatch({
       type: 'ADD_CHAT_MESSAGE',
       payload: { text: text.trim(), from: state.myId, ts: Date.now() },
     });
-  }, [peersRef, state.myId, dispatch]);
+    if (sent === 0 && peersRef.current.size > 0) {
+      addToast('Chat: waiting for peer connection...', '');
+    } else if (sent === 0) {
+      addToast('No peers connected', 'error');
+    }
+  }, [peersRef, state.myId, dispatch, addToast]);
 
   const broadcastToAll = useCallback(async (files) => {
     const connectedPeers = [];
