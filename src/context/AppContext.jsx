@@ -2,22 +2,40 @@ import { createContext, useContext, useReducer, useCallback, useRef, useEffect }
 
 const AppContext = createContext(null);
 
+const TAG_COLORS = ['#4aa3ff', '#22c997', '#f5c542', '#ff4f6e', '#a855f7', '#f97316', '#ec4899', '#06b6d4'];
+
 function loadHistory() {
   try {
-    return JSON.parse(localStorage.getItem('flashshare_history') || '[]');
+    const raw = JSON.parse(localStorage.getItem('flashshare_history') || '[]');
+    return raw.map(item => ({
+      ...item,
+      tags: item.tags || [],
+      favorite: item.favorite || false,
+      trashed: item.trashed || false,
+      trashedAt: item.trashedAt || null,
+      receivedAt: item.receivedAt || Date.now(),
+    }));
   } catch { return []; }
 }
 
 function saveHistory(items) {
   try {
-    localStorage.setItem('flashshare_history', JSON.stringify(items.slice(-50)));
+    localStorage.setItem('flashshare_history', JSON.stringify(items.slice(-100)));
   } catch {}
 }
 
-function loadTheme() {
+function loadTags() {
   try {
-    return localStorage.getItem('flashshare_theme') || 'dark';
-  } catch { return 'dark'; }
+    return JSON.parse(localStorage.getItem('flashshare_tags') || '[]');
+  } catch { return []; }
+}
+
+function saveTags(tags) {
+  try { localStorage.setItem('flashshare_tags', JSON.stringify(tags)); } catch {}
+}
+
+function loadTheme() {
+  try { return localStorage.getItem('flashshare_theme') || 'dark'; } catch { return 'dark'; }
 }
 
 const initialState = {
@@ -28,11 +46,19 @@ const initialState = {
   peers: {},
   transfers: [],
   received: loadHistory(),
+  tags: loadTags(),
   toasts: [],
   confirmDialog: null,
   theme: loadTheme(),
   stats: { sent: 0, received: 0, sentBytes: 0, receivedBytes: 0 },
   latency: null,
+  viewMode: 'received',
+  searchQuery: '',
+  searchType: '',
+  searchTag: '',
+  sortBy: 'date-desc',
+  bulkMode: false,
+  bulkSelected: [],
 };
 
 function reducer(state, action) {
@@ -55,14 +81,103 @@ function reducer(state, action) {
       return { ...state, transfers: state.transfers.map(t => t.id === action.payload.id ? { ...t, ...action.payload } : t) };
     case 'REMOVE_TRANSFER':
       return { ...state, transfers: state.transfers.filter(t => t.id !== action.payload) };
-    case 'ADD_RECEIVED':
-      if (state.received.find(r => r.name === action.payload.name && r.size === action.payload.size)) return state;
-      const updated = [...state.received, action.payload];
+    case 'ADD_RECEIVED': {
+      const withMeta = { ...action.payload, tags: [], favorite: false, trashed: false, trashedAt: null, receivedAt: Date.now() };
+      const updated = [...state.received, withMeta];
       saveHistory(updated);
       return { ...state, received: updated };
+    }
     case 'CLEAR_RECEIVED':
       saveHistory([]);
       return { ...state, received: [] };
+    case 'TOGGLE_FAVORITE': {
+      const r = state.received.map(item =>
+        item.name === action.payload.name && item.size === action.payload.size
+          ? { ...item, favorite: !item.favorite } : item
+      );
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'SET_TAGS': {
+      const r = state.received.map(item =>
+        item.name === action.payload.name && item.size === action.payload.size
+          ? { ...item, tags: action.payload.tags } : item
+      );
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'TRASH_ITEM': {
+      const r = state.received.map(item =>
+        item.name === action.payload.name && item.size === action.payload.size
+          ? { ...item, trashed: true, trashedAt: Date.now() } : item
+      );
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'RESTORE_ITEM': {
+      const r = state.received.map(item =>
+        item.name === action.payload.name && item.size === action.payload.size
+          ? { ...item, trashed: false, trashedAt: null } : item
+      );
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'EMPTY_TRASH': {
+      const r = state.received.filter(item => !item.trashed);
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'PERMANENT_DELETE': {
+      const r = state.received.filter(item =>
+        !(item.name === action.payload.name && item.size === action.payload.size)
+      );
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'BULK_TRASH': {
+      const names = new Set(action.payload.map(p => `${p.name}|${p.size}`));
+      const r = state.received.map(item =>
+        names.has(`${item.name}|${item.size}`) ? { ...item, trashed: true, trashedAt: Date.now() } : item
+      );
+      saveHistory(r);
+      return { ...state, received: r, bulkSelected: [], bulkMode: false };
+    }
+    case 'BULK_RESTORE': {
+      const names = new Set(action.payload.map(p => `${p.name}|${p.size}`));
+      const r = state.received.map(item =>
+        names.has(`${item.name}|${item.size}`) ? { ...item, trashed: false, trashedAt: null } : item
+      );
+      saveHistory(r);
+      return { ...state, received: r, bulkSelected: [], bulkMode: false };
+    }
+    case 'BULK_TAG': {
+      const names = new Set(action.payload.items.map(p => `${p.name}|${p.size}`));
+      const r = state.received.map(item =>
+        names.has(`${item.name}|${item.size}`) ? { ...item, tags: action.payload.tag } : item
+      );
+      saveHistory(r);
+      return { ...state, received: r, bulkSelected: [], bulkMode: false };
+    }
+    case 'BULK_FAVORITE': {
+      const names = new Set(action.payload.map(p => `${p.name}|${p.size}`));
+      const r = state.received.map(item =>
+        names.has(`${item.name}|${item.size}`) ? { ...item, favorite: true } : item
+      );
+      saveHistory(r);
+      return { ...state, received: r, bulkSelected: [], bulkMode: false };
+    }
+    case 'ADD_TAG_DEF': {
+      const t = [...state.tags, { ...action.payload, id: Date.now() + Math.random() }];
+      saveTags(t);
+      return { ...state, tags: t };
+    }
+    case 'REMOVE_TAG_DEF': {
+      const t = state.tags.filter(tag => tag.id !== action.payload);
+      saveTags(t);
+      const r = state.received.map(item => ({ ...item, tags: item.tags.filter(t => t !== action.payload) }));
+      saveHistory(r);
+      return { ...state, tags: t, received: r };
+    }
     case 'SET_THEME':
       try { localStorage.setItem('flashshare_theme', action.payload); } catch {}
       return { ...state, theme: action.payload };
@@ -70,6 +185,30 @@ function reducer(state, action) {
       return { ...state, stats: { ...state.stats, ...action.payload } };
     case 'SET_LATENCY':
       return { ...state, latency: action.payload };
+    case 'SET_VIEW_MODE':
+      return { ...state, viewMode: action.payload, bulkMode: false, bulkSelected: [] };
+    case 'SET_SEARCH_QUERY':
+      return { ...state, searchQuery: action.payload };
+    case 'SET_SEARCH_TYPE':
+      return { ...state, searchType: action.payload };
+    case 'SET_SEARCH_TAG':
+      return { ...state, searchTag: action.payload };
+    case 'SET_SORT':
+      return { ...state, sortBy: action.payload };
+    case 'TOGGLE_BULK_MODE':
+      return { ...state, bulkMode: !state.bulkMode, bulkSelected: [] };
+    case 'TOGGLE_BULK_ITEM': {
+      const key = `${action.payload.name}|${action.payload.size}`;
+      const exists = state.bulkSelected.find(p => `${p.name}|${p.size}` === key);
+      return {
+        ...state,
+        bulkSelected: exists
+          ? state.bulkSelected.filter(p => `${p.name}|${p.size}` !== key)
+          : [...state.bulkSelected, action.payload],
+      };
+    }
+    case 'CLEAR_BULK':
+      return { ...state, bulkSelected: [], bulkMode: false };
     case 'ADD_TOAST':
       return { ...state, toasts: [...state.toasts, action.payload] };
     case 'REMOVE_TOAST':
@@ -260,7 +399,7 @@ export function AppProvider({ children }) {
       state, dispatch, send, addToast, setConfirm, clearConfirm,
       updatePeers, peersRef, wsRef, subscribe, handleWsMessage,
       toggleTheme, requestNotification, sendBrowserNotification,
-      startLatencyCheck,
+      startLatencyCheck, TAG_COLORS,
     }}>
       {children}
     </AppContext.Provider>

@@ -13,7 +13,6 @@ export default function RoomView() {
   const { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll } = useWebRTC();
   const [showQR, setShowQR] = useState(false);
   const qrCanvasRef = useRef(null);
-  const [filterText, setFilterText] = useState('');
   const [roomExpiry, setRoomExpiry] = useState(900);
   const fileInputRef = useRef(null);
 
@@ -198,19 +197,7 @@ export default function RoomView() {
         </div>
         <div className="side-panel">
           <PeerList />
-          <div className="panel-header" style={{ marginTop: 16 }}>
-            <h3>Received</h3>
-            <span className="badge">{state.received.length}</span>
-          </div>
-          <input
-            type="text"
-            placeholder="Search files..."
-            value={filterText}
-            onChange={e => setFilterText(e.target.value)}
-            className="search-input"
-            autoComplete="off"
-          />
-          <ReceivedList filter={filterText} />
+          <ReceivedList />
         </div>
       </div>
 
