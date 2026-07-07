@@ -167,7 +167,6 @@ export function AppProvider({ children }) {
   }, [addToast]);
 
   useEffect(() => {
-  useEffect(() => {
     document.documentElement.setAttribute('data-theme', state.theme);
   }, [state.theme]);
 
@@ -194,8 +193,9 @@ export function AppProvider({ children }) {
     };
     timer = setTimeout(check, 3000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [dispatch, wsRef]);
 
+  useEffect(() => {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${location.host}/ws`;
     let ws;
