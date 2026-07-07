@@ -38,10 +38,11 @@ const MIME_TYPES = {
 };
 
 class Room {
-  constructor(id) {
+  constructor(id, expiryMinutes = 15) {
     this.id = id;
     this.participants = [];
     this.createdAt = Date.now();
+    this.expiryMs = expiryMinutes * 60 * 1000;
   }
   add(socket) {
     if (!this.participants.includes(socket)) {
@@ -215,10 +216,11 @@ function handleMessage(ws, msg) {
         ws.send(JSON.stringify({ type: 'error', message: 'Room already exists. Try joining instead.' }));
         return;
       }
-      ws.room = rooms.get(roomId) || new Room(roomId);
+      const expiryMin = Math.max(1, Math.min(1440, msg.expiry || 15));
+      ws.room = rooms.get(roomId) || new Room(roomId, expiryMin);
       ws.room.add(ws);
       rooms.set(roomId, ws.room);
-      ws.send(JSON.stringify({ type: 'room-created', roomId }));
+      ws.send(JSON.stringify({ type: 'room-created', roomId, expiry: expiryMin }));
       break;
     }
 
@@ -314,7 +316,8 @@ const cleanupTimer = setInterval(() => {
   const now = Date.now();
   rooms.forEach((room, id) => {
     room.participants = room.participants.filter(p => p.readyState === 1);
-    if (now - room.createdAt > MAX_ROOM_AGE || room.participants.length === 0) {
+    const roomAge = room.expiryMs || MAX_ROOM_AGE;
+    if (now - room.createdAt > roomAge || room.participants.length === 0) {
       room.broadcast(JSON.stringify({ type: 'room-closed', reason: 'Room expired' }));
       rooms.delete(id);
     }

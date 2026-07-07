@@ -59,6 +59,10 @@ const initialState = {
   sortBy: 'date-desc',
   bulkMode: false,
   bulkSelected: [],
+  activity: [],
+  sharedHistory: [],
+  pendingRename: null,
+  linkExpiry: 60,
 };
 
 function reducer(state, action) {
@@ -82,7 +86,7 @@ function reducer(state, action) {
     case 'REMOVE_TRANSFER':
       return { ...state, transfers: state.transfers.filter(t => t.id !== action.payload) };
     case 'ADD_RECEIVED': {
-      const withMeta = { ...action.payload, tags: [], favorite: false, trashed: false, trashedAt: null, receivedAt: Date.now() };
+      const withMeta = { ...action.payload, tags: [], favorite: false, trashed: false, trashedAt: null, receivedAt: Date.now(), comments: [], note: action.payload.note || '' };
       const updated = [...state.received, withMeta];
       saveHistory(updated);
       return { ...state, received: updated };
@@ -215,6 +219,35 @@ function reducer(state, action) {
       return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
     case 'SET_CONFIRM':
       return { ...state, confirmDialog: action.payload };
+    case 'ADD_ACTIVITY':
+      return { ...state, activity: [{ ...action.payload, id: Date.now() + Math.random(), ts: Date.now() }, ...state.activity].slice(0, 100) };
+    case 'ADD_TO_SHARED_HISTORY':
+      return { ...state, sharedHistory: [{ ...action.payload, id: Date.now() + Math.random() }, ...state.sharedHistory].slice(0, 200) };
+    case 'CLEAR_SHARED_HISTORY':
+      return { ...state, sharedHistory: [] };
+    case 'SET_PENDING_RENAME':
+      return { ...state, pendingRename: action.payload };
+    case 'ADD_COMMENT': {
+      const r = state.received.map(item =>
+        item.name === action.payload.name && item.size === action.payload.size
+          ? { ...item, comments: [...(item.comments || []), action.payload.comment] }
+          : item
+      );
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'SET_PEER_TRANSFERRING': {
+      const p = { ...state.peers };
+      if (p[action.payload]) p[action.payload] = { ...p[action.payload], transferring: true };
+      return { ...state, peers: p };
+    }
+    case 'SET_PEER_IDLE': {
+      const p = { ...state.peers };
+      if (p[action.payload]) p[action.payload] = { ...p[action.payload], transferring: false };
+      return { ...state, peers: p };
+    }
+    case 'SET_LINK_EXPIRY':
+      return { ...state, linkExpiry: action.payload };
     default:
       return state;
   }

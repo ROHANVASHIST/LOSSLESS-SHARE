@@ -1,12 +1,18 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { generateRoomId } from '../utils/helpers';
 
 export default function Landing() {
-  const { send, addToast, state } = useApp();
+  const { send, addToast, state, dispatch } = useApp();
   const [roomCode, setRoomCode] = useState('');
 
   const isConnected = state.wsReady;
+
+  useEffect(() => {
+    const p = new URLSearchParams(location.search);
+    const e = p.get('e');
+    if (e) dispatch({ type: 'SET_LINK_EXPIRY', payload: Math.max(1, Math.min(1440, Number(e) || 60)) });
+  }, [dispatch]);
 
   const handleCreate = () => {
     if (!isConnected) {
@@ -14,7 +20,7 @@ export default function Landing() {
       return;
     }
     const id = generateRoomId();
-    send({ type: 'create', roomId: id });
+    send({ type: 'create', roomId: id, expiry: state.linkExpiry });
   };
 
   const handleJoin = () => {

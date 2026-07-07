@@ -7,14 +7,18 @@ import TransferList from './TransferList';
 import PeerList from './PeerList';
 import ReceivedList from './ReceivedList';
 import ThemeToggle from './ThemeToggle';
+import RenameDialog from './RenameDialog';
+import ActivityFeed from './ActivityFeed';
+import SharedHistory from './SharedHistory';
 
 export default function RoomView() {
   const { state, dispatch, send, addToast, setConfirm, toggleTheme, startLatencyCheck } = useApp();
-  const { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll } = useWebRTC();
+  const { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll, sendComment } = useWebRTC();
   const [showQR, setShowQR] = useState(false);
   const qrCanvasRef = useRef(null);
   const [roomExpiry, setRoomExpiry] = useState(900);
   const fileInputRef = useRef(null);
+  const [renameFiles, setRenameFiles] = useState(null);
 
   useEffect(() => {
     const unsub = startLatencyCheck?.();
@@ -22,12 +26,14 @@ export default function RoomView() {
   }, [startLatencyCheck]);
 
   useEffect(() => {
-    setRoomExpiry(900);
+    if (!state.currentRoom) return;
+    const sec = (state.linkExpiry || 15) * 60;
+    setRoomExpiry(sec);
     const timer = setInterval(() => {
       setRoomExpiry(prev => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(timer);
-  }, [state.currentRoom]);
+  }, [state.currentRoom, state.linkExpiry]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -42,7 +48,7 @@ export default function RoomView() {
 
   useEffect(() => {
     if (showQR && state.currentRoom && qrCanvasRef.current) {
-      QRCode.toCanvas(qrCanvasRef.current, `${location.origin}?room=${state.currentRoom}`, {
+      QRCode.toCanvas(qrCanvasRef.current, `${location.origin}?room=${state.currentRoom}&e=${state.linkExpiry}`, {
         width: 240,
         margin: 2,
         color: { dark: '#000000', light: '#ffffff' },
@@ -50,13 +56,30 @@ export default function RoomView() {
     }
   }, [showQR, state.currentRoom]);
 
-  const handleFiles = useCallback((files, targetPeerId) => {
-    Array.from(files).forEach(file => startFileSend(file, targetPeerId));
+  const handleFiles = useCallback((files, targetPeerId, customNames, note) => {
+    const fileArr = Array.from(files);
+    fileArr.forEach((file, i) => {
+      const name = customNames?.[i];
+      startFileSend(file, targetPeerId, name, note);
+    });
   }, [startFileSend]);
 
   const handleFilesFromUpload = useCallback((files) => {
-    handleFiles(files);
+    setRenameFiles({ files, targetPeerId: null });
+  }, []);
+
+  const handleFilesFromUploadToPeer = useCallback((files, peerId) => {
+    setRenameFiles({ files, targetPeerId: peerId });
+  }, []);
+
+  const handleRenameConfirm = useCallback((files, customNames, note) => {
+    setRenameFiles(null);
+    handleFiles(files, null, customNames, note);
   }, [handleFiles]);
+
+  const handleRenameCancel = useCallback(() => {
+    setRenameFiles(null);
+  }, []);
 
   const handlePaste = useCallback(async (e) => {
     const items = e.clipboardData?.items;
@@ -95,10 +118,11 @@ export default function RoomView() {
   const copyShareLink = useCallback((e) => {
     e.preventDefault();
     if (!state.currentRoom) return;
-    navigator.clipboard.writeText(`${location.origin}?room=${state.currentRoom}`)
+    const url = `${location.origin}?room=${state.currentRoom}&e=${state.linkExpiry}`;
+    navigator.clipboard.writeText(url)
       .then(() => addToast('Share link copied!', 'success'))
       .catch(() => addToast('Failed to copy link', 'error'));
-  }, [state.currentRoom, addToast]);
+  }, [state.currentRoom, state.linkExpiry, addToast]);
 
   const cancelAll = useCallback(() => {
     state.transfers.forEach(t => {
@@ -158,7 +182,7 @@ export default function RoomView() {
         </div>
         <div className="app-actions">
           <ThemeToggle />
-          <a href={`?room=${state.currentRoom}`} onClick={copyShareLink} className="btn small" target="_blank" rel="noreferrer">
+          <a href={`?room=${state.currentRoom}&e=${state.linkExpiry}`} onClick={copyShareLink} className="btn small" target="_blank" rel="noreferrer">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
               <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
@@ -175,6 +199,19 @@ export default function RoomView() {
         <span className="status-meta">
           {state.latency !== null && <span className="latency-badge" title="Connection latency">{'\u231A'} {state.latency}ms</span>}
           <span className="expiry-badge" title="Room expires in">{'\u23F1'} {expiryStr}</span>
+          <select
+            value={state.linkExpiry}
+            onChange={e => dispatch({ type: 'SET_LINK_EXPIRY', payload: Number(e.target.value) })}
+            className="expiry-select"
+            title="Share link expiry"
+          >
+            <option value={5}>5 min</option>
+            <option value={15}>15 min</option>
+            <option value={30}>30 min</option>
+            <option value={60}>1 hr</option>
+            <option value={360}>6 hr</option>
+            <option value={1440}>24 hr</option>
+          </select>
           {hasPeers ? `${peerCount} peer(s)` : ''}
           {state.stats.sent > 0 || state.stats.received > 0 ? (
             <span className="stats-badge" title="Session stats">
@@ -196,8 +233,10 @@ export default function RoomView() {
           <TransferList onCancel={cancelTransfer} onRetry={retryFileSend} />
         </div>
         <div className="side-panel">
-          <PeerList />
-          <ReceivedList />
+          <PeerList onComment={sendComment} onSendTo={handleFilesFromUploadToPeer} />
+          <ReceivedList onComment={sendComment} />
+          <ActivityFeed />
+          <SharedHistory />
         </div>
       </div>
 
@@ -208,6 +247,14 @@ export default function RoomView() {
         onChange={onBroadcastFiles}
         style={{ display: 'none' }}
       />
+
+      {renameFiles && (
+        <RenameDialog
+          files={renameFiles.files}
+          onConfirm={handleRenameConfirm}
+          onCancel={handleRenameCancel}
+        />
+      )}
 
       {showQR && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowQR(false)}>

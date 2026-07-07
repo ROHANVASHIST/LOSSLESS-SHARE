@@ -4,8 +4,9 @@ import { getFileIcon, formatBytes } from '../utils/helpers';
 
 const TAG_COLORS = ['#4aa3ff', '#22c997', '#f5c542', '#ff4f6e', '#a855f7', '#f97316', '#ec4899', '#06b8d4'];
 
-export default function ReceivedList() {
+export default function ReceivedList({ onComment }) {
   const { state, dispatch, addToast, setConfirm } = useApp();
+  const [commentInput, setCommentInput] = useState(null);
   const [showTagPicker, setShowTagPicker] = useState(null);
   const [showNewTag, setShowNewTag] = useState(false);
   const [newTagName, setNewTagName] = useState('');
@@ -317,6 +318,7 @@ export default function ReceivedList() {
                                 </div>
                               )}
                             </div>
+                            <button className="action-btn" onClick={e => { e.stopPropagation(); setCommentInput(commentInput === `${item.name}|${item.size}` ? null : `${item.name}|${item.size}`); }} title="Comment">{'\uD83D\uDCAC'}</button>
                             <button className="action-btn danger" onClick={e => handleTrash(item, e)} title="Trash">{'\uD83D\uDDD1'}</button>
                           </>
                         )}
@@ -324,6 +326,41 @@ export default function ReceivedList() {
                     )}
                   </div>
                 </div>
+                {item.note && (
+                  <div className="item-note" onClick={e => e.stopPropagation()}>
+                    {'\uD83D\uDCCB'} {item.note}
+                  </div>
+                )}
+                {(item.comments || []).length > 0 && (
+                  <div className="comment-list" onClick={e => e.stopPropagation()}>
+                    {item.comments.map((c, ci) => (
+                      <div key={ci} className="comment-item">
+                        <span className="comment-from">{c.from ? `@${c.from.slice(0, 6)}` : ''}</span>
+                        <span className="comment-text">{highlightMentions(c.text)}</span>
+                        <span className="comment-time">{formatCommentTime(c.ts)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {commentInput === `${item.name}|${item.size}` && (
+                  <div className="comment-input-row" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      placeholder="Write a comment... @mention"
+                      className="comment-input"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && e.target.value.trim()) {
+                          const peerIds = Object.values(state.peers).filter(p => p.connected).map(p => p.id);
+                          peerIds.forEach(pid => onComment?.(pid, item.name, item.size, e.target.value.trim()));
+                          e.target.value = '';
+                          setCommentInput(null);
+                        }
+                        if (e.key === 'Escape') setCommentInput(null);
+                      }}
+                      autoFocus
+                    />
+                  </div>
+                )}
               </div>
             );
           })
@@ -367,4 +404,17 @@ export default function ReceivedList() {
       )}
     </>
   );
+}
+
+function highlightMentions(text) {
+  if (!text) return text;
+  return text.split(/(@\w+)/g).map((part, i) =>
+    part.startsWith('@') ? <span key={i} className="mention">{part}</span> : part
+  );
+}
+
+function formatCommentTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }

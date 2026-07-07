@@ -10,7 +10,7 @@ const PC_CONFIG = {
 };
 
 export function useWebRTC() {
-  const { dispatch, send, addToast, updatePeers, peersRef, subscribe, sendBrowserNotification } = useApp();
+  const { state, dispatch, send, addToast, updatePeers, peersRef, subscribe, sendBrowserNotification } = useApp();
   const incomingFilesRef = useRef(new Map());
   const outgoingFilesRef = useRef(new Map());
 
@@ -33,10 +33,12 @@ export function useWebRTC() {
       if (msg.type === 'file-start') {
         const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
         const cardId = `recv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const displayName = msg.customName || msg.name;
         const transfer = {
           id: cardId,
           direction: 'receive',
-          name: msg.name,
+          name: displayName,
+          originalName: msg.name,
           size: msg.size,
           mimeType: msg.mimeType,
           fileType: msg.fileType || 'File',
@@ -45,10 +47,13 @@ export function useWebRTC() {
           icon: getFileIcon(msg.mimeType, msg.name),
           complete: false,
           error: false,
+          note: msg.note || '',
+          fromPeer: peerId,
         };
         dispatch({ type: 'ADD_TRANSFER', payload: transfer });
         incomingFilesRef.current.set(fileId, {
           name: msg.name,
+          displayName,
           mimeType: msg.mimeType,
           size: msg.size,
           chunks: new Map(),
@@ -60,10 +65,21 @@ export function useWebRTC() {
           startTime: performance.now(),
           speedSamples: [],
           cancelled: false,
+          note: msg.note || '',
         });
+      } else if (msg.type === 'file-comment') {
+        dispatch({
+          type: 'ADD_COMMENT',
+          payload: {
+            name: msg.fileName,
+            size: msg.fileSize,
+            comment: { text: msg.text, from: msg.from, ts: Date.now() },
+          }
+        });
+        addToast(`Comment on ${msg.fileName}: ${msg.text}`, '');
       }
     } catch { }
-  }, [dispatch]);
+  }, [dispatch, addToast]);
 
   const handleBinaryChunk = useCallback((peerId, buffer) => {
     for (const [, fileData] of incomingFilesRef.current) {
@@ -118,7 +134,7 @@ export function useWebRTC() {
 
     dispatch({
       type: 'ADD_RECEIVED',
-      payload: { name: fileData.name, size: fileData.size, mimeType: fileData.mimeType, url }
+      payload: { name: fileData.displayName || fileData.name, size: fileData.size, mimeType: fileData.mimeType, url, note: fileData.note || '' }
     });
 
     dispatch({
@@ -126,10 +142,20 @@ export function useWebRTC() {
       payload: { received: 1, receivedBytes: fileData.size }
     });
 
+    dispatch({
+      type: 'ADD_ACTIVITY',
+      payload: { type: 'file-received', text: `Received ${fileData.displayName || fileData.name}`, peerId: fileData.peerId }
+    });
+
+    dispatch({
+      type: 'ADD_TO_SHARED_HISTORY',
+      payload: { type: 'received', name: fileData.displayName || fileData.name, size: fileData.size, peerId: fileData.peerId, ts: Date.now() }
+    });
+
     incomingFilesRef.current.delete(fileData.fileId);
     setTimeout(() => URL.revokeObjectURL(url), 60000);
-    addToast(`Received: ${fileData.name}`, 'success');
-    sendBrowserNotification('FlashShare', `Received: ${fileData.name}`);
+    addToast(`Received: ${fileData.displayName || fileData.name}`, 'success');
+    sendBrowserNotification('FlashShare', `Received: ${fileData.displayName || fileData.name}`);
     playCompleteSound();
   }, [dispatch, addToast, sendBrowserNotification]);
 
@@ -164,6 +190,7 @@ export function useWebRTC() {
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') {
         updatePeers();
+        dispatch({ type: 'ADD_ACTIVITY', payload: { type: 'peer-connected', text: 'Peer connected', peerId } });
       } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
         setTimeout(() => {
           const p = peersRef.current.get(peerId);
@@ -173,6 +200,7 @@ export function useWebRTC() {
             peersRef.current.delete(peerId);
           }
           updatePeers();
+          dispatch({ type: 'ADD_ACTIVITY', payload: { type: 'peer-disconnected', text: 'Peer disconnected', peerId } });
         }, 2000);
       }
     };
@@ -195,7 +223,7 @@ export function useWebRTC() {
     }
 
     return pc;
-  }, [send, setupDataChannel, updatePeers, peersRef]);
+  }, [send, setupDataChannel, updatePeers, peersRef, dispatch]);
 
   const handleOffer = useCallback(async (msg) => {
     const pc = createPeerConnection(msg.from, false);
@@ -253,15 +281,17 @@ export function useWebRTC() {
     return false;
   }, []);
 
-  const startFileSend = useCallback(async (file, targetPeerId) => {
+  const startFileSend = useCallback(async (file, targetPeerId, customName, note) => {
     const activePeerId = getActivePeerId(targetPeerId);
     if (!activePeerId) {
       addToast('No peer connected', 'error');
       return;
     }
 
-    if (checkDuplicate(file.name)) {
-      addToast(`Duplicate: ${file.name} is already being sent`, 'error');
+    const displayName = customName || file.name;
+
+    if (checkDuplicate(displayName)) {
+      addToast(`Duplicate: ${displayName} is already being sent`, 'error');
       return;
     }
 
@@ -276,37 +306,50 @@ export function useWebRTC() {
     const icon = getFileIcon(file.type, file.name);
     const fileType = getFileType(file);
 
+    dispatch({ type: 'SET_PEER_TRANSFERRING', payload: activePeerId });
+
     dispatch({
       type: 'ADD_TRANSFER',
       payload: {
-        id: cardId, direction: 'send', name: file.name, size: file.size,
+        id: cardId, direction: 'send', name: displayName, size: file.size,
         mimeType: file.type || 'application/octet-stream', fileType,
         progress: 0, status: 'Starting...', icon, complete: false, error: false,
-        targetPeerId,
+        targetPeerId, note: note || '',
       }
     });
 
     const sendState = {
-      file, cardId, peerId: activePeerId, sentBytes: 0,
+      file, cardId, peerId: activePeerId, sentBytes: 0, displayName,
       cancelled: false, startTime: performance.now(),
-      speedSamples: [], fileId,
+      speedSamples: [], fileId, note: note || '',
     };
 
     outgoingFilesRef.current.set(fileId, sendState);
 
     try {
       peer.channel.send(JSON.stringify({
-        type: 'file-start', name: file.name, size: file.size,
-        mimeType: file.type || 'application/octet-stream', fileType,
+        type: 'file-start',
+        name: file.name,
+        customName: customName || undefined,
+        size: file.size,
+        mimeType: file.type || 'application/octet-stream',
+        fileType,
+        note: note || undefined,
       }));
+
+      dispatch({
+        type: 'ADD_ACTIVITY',
+        payload: { type: 'file-sent', text: `Sending ${displayName}`, peerId: activePeerId }
+      });
 
       const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
       for (let i = 0; i < totalChunks; i++) {
         if (sendState.cancelled) {
           dispatch({ type: 'UPDATE_TRANSFER', payload: { id: cardId, progress: 0, status: 'Cancelled', error: true } });
-          addToast(`Cancelled: ${file.name}`, 'error');
+          addToast(`Cancelled: ${displayName}`, 'error');
           setTimeout(() => dispatch({ type: 'REMOVE_TRANSFER', payload: cardId }), 2000);
           outgoingFilesRef.current.delete(fileId);
+          dispatch({ type: 'SET_PEER_IDLE', payload: activePeerId });
           return;
         }
 
@@ -348,21 +391,31 @@ export function useWebRTC() {
       if (!sendState.cancelled) {
         dispatch({ type: 'UPDATE_TRANSFER', payload: { id: cardId, progress: 100, status: 'Sent', complete: true } });
         dispatch({ type: 'UPDATE_STATS', payload: { sent: 1, sentBytes: file.size } });
-        addToast(`Sent: ${file.name}`, 'success');
-        sendBrowserNotification('FlashShare', `Sent: ${file.name}`);
+        dispatch({
+          type: 'ADD_ACTIVITY',
+          payload: { type: 'file-sent', text: `Sent ${displayName}`, peerId: activePeerId }
+        });
+        dispatch({
+          type: 'ADD_TO_SHARED_HISTORY',
+          payload: { type: 'sent', name: displayName, size: file.size, peerId: activePeerId, ts: Date.now() }
+        });
+        addToast(`Sent: ${displayName}`, 'success');
+        sendBrowserNotification('FlashShare', `Sent: ${displayName}`);
         playCompleteSound();
         setTimeout(() => dispatch({ type: 'REMOVE_TRANSFER', payload: cardId }), 3000);
       }
 
       outgoingFilesRef.current.delete(fileId);
+      dispatch({ type: 'SET_PEER_IDLE', payload: activePeerId });
     } catch (err) {
       if (!sendState.cancelled) {
         dispatch({ type: 'UPDATE_TRANSFER', payload: { id: cardId, progress: 0, status: `Error: ${err.message}`, error: true } });
         addToast(`Send failed: ${err.message}`, 'error');
       }
       outgoingFilesRef.current.delete(fileId);
+      dispatch({ type: 'SET_PEER_IDLE', payload: activePeerId });
     }
-  }, [getActivePeerId, dispatch, addToast, peersRef]);
+  }, [getActivePeerId, dispatch, addToast, peersRef, sendBrowserNotification, calcETA, checkDuplicate]);
 
   const cancelTransfer = useCallback((transferId) => {
     for (const [, state] of outgoingFilesRef.current) {
@@ -378,6 +431,18 @@ export function useWebRTC() {
     }
   }, [dispatch]);
 
+  const sendComment = useCallback((peerId, fileName, fileSize, text) => {
+    const peer = peersRef.current.get(peerId);
+    if (!peer?.channel || peer.channel.readyState !== 'open') {
+      addToast('Peer not connected', 'error');
+      return;
+    }
+    peer.channel.send(JSON.stringify({
+      type: 'file-comment', fileName, fileSize, text, from: state.myId,
+    }));
+    addToast('Comment sent', 'success');
+  }, [addToast, peersRef, state.myId]);
+
   const cleanupAllPeers = useCallback(() => {
     for (const [, peer] of peersRef.current) {
       try { peer.channel?.close(); } catch {}
@@ -392,14 +457,17 @@ export function useWebRTC() {
       switch (msg.type) {
         case 'room-created':
         case 'room-joined':
+          dispatch({ type: 'ADD_ACTIVITY', payload: { type: 'room', text: `Joined room ${msg.roomId}` } });
           if (msg.peers?.length > 0) {
             msg.peers.forEach(peerId => createPeerConnection(peerId, true));
           }
           break;
         case 'peer-joined':
+          dispatch({ type: 'ADD_ACTIVITY', payload: { type: 'peer-joined', text: 'Peer joined', peerId: msg.id } });
           createPeerConnection(msg.id, true);
           break;
         case 'peer-left':
+          dispatch({ type: 'ADD_ACTIVITY', payload: { type: 'peer-left', text: 'Peer left', peerId: msg.id } });
           const peer = peersRef.current.get(msg.id);
           if (peer) {
             try { peer.channel?.close(); } catch {}
@@ -420,13 +488,13 @@ export function useWebRTC() {
       }
     });
     return unsub;
-  }, [subscribe, createPeerConnection, handleOffer, handleAnswer, handleIceCandidate, updatePeers, peersRef]);
+  }, [subscribe, createPeerConnection, handleOffer, handleAnswer, handleIceCandidate, updatePeers, peersRef, dispatch]);
 
   const retryFileSend = useCallback(async (transfer) => {
     if (transfer.direction !== 'send') return;
     const file = new File([], transfer.name, { type: transfer.mimeType });
     Object.defineProperty(file, 'size', { value: transfer.size });
-    await startFileSend(file, transfer.targetPeerId);
+    await startFileSend(file, transfer.targetPeerId, transfer.name, transfer.note);
   }, [startFileSend]);
 
   const broadcastToAll = useCallback(async (files) => {
@@ -447,5 +515,5 @@ export function useWebRTC() {
     }
   }, [startFileSend, addToast, peersRef]);
 
-  return { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll };
+  return { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll, sendComment };
 }
