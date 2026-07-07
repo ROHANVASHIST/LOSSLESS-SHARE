@@ -9,7 +9,7 @@ const ROOM_CLEANUP_INTERVAL = 60000;
 const HEARTBEAT_INTERVAL = 25000;
 const HEARTBEAT_TIMEOUT = 30000;
 const RATE_LIMIT_WINDOW = 60000;
-const MAX_ACTIONS_PER_WINDOW = 30;
+const MAX_ACTIONS_PER_WINDOW = 120;
 
 const DIST_DIR = path.join(__dirname, 'dist');
 const PUBLIC_DIR = path.join(__dirname, 'public');

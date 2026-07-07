@@ -191,6 +191,7 @@ export function useWebRTC() {
     const pc = new RTCPeerConnection(PC_CONFIG);
     const peer = { connection: pc, channel: null, cancelled: false };
     peersRef.current.set(peerId, peer);
+    updatePeers();
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -230,6 +231,7 @@ export function useWebRTC() {
         const channel = event.channel;
         peer.channel = channel;
         setupDataChannel(channel, peerId);
+        updatePeers();
       };
     }
 
@@ -475,7 +477,6 @@ export function useWebRTC() {
           break;
         case 'peer-joined':
           dispatch({ type: 'ADD_ACTIVITY', payload: { type: 'peer-joined', text: 'Peer joined', peerId: msg.id } });
-          createPeerConnection(msg.id, true);
           break;
         case 'peer-left':
           dispatch({ type: 'ADD_ACTIVITY', payload: { type: 'peer-left', text: 'Peer left', peerId: msg.id } });

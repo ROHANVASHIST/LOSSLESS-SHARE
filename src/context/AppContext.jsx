@@ -263,6 +263,7 @@ export function AppProvider({ children }) {
   const reconnectAttemptsRef = useRef(0);
   const peersRef = useRef(new Map());
   const messageHandlersRef = useRef([]);
+  const joinTimerRef = useRef(null);
 
   const addToast = useCallback((message, type = '') => {
     const id = Date.now() + Math.random();
@@ -296,13 +297,13 @@ export function AppProvider({ children }) {
   }, []);
 
   const send = useCallback((msg) => {
-    if (!state.wsReady || wsRef.current?.readyState !== WebSocket.OPEN) {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       addToast('Not connected to server', 'error');
       return false;
     }
     wsRef.current.send(JSON.stringify(msg));
     return true;
-  }, [state.wsReady, addToast]);
+  }, [addToast]);
 
   const updatePeers = useCallback(() => {
     const plain = {};
@@ -384,12 +385,14 @@ export function AppProvider({ children }) {
       ws.onopen = () => {
         dispatch({ type: 'SET_WS_READY', payload: true });
         reconnectAttemptsRef.current = 0;
+        if (joinTimerRef.current) { clearTimeout(joinTimerRef.current); joinTimerRef.current = null; }
         const params = new URLSearchParams(location.search);
         const room = params.get('room');
         if (room) {
-          setTimeout(() => {
+          joinTimerRef.current = setTimeout(() => {
             send({ type: 'join', roomId: room.toUpperCase() });
-          }, 300);
+            joinTimerRef.current = null;
+          }, 500);
         }
       };
 
@@ -411,12 +414,12 @@ export function AppProvider({ children }) {
 
     function tryReconnect() {
       if (reconnectTimerRef.current) return;
-      if (reconnectAttemptsRef.current >= 5) {
+      if (reconnectAttemptsRef.current >= 3) {
         addToast('Could not reconnect. Please refresh.', 'error');
         return;
       }
       reconnectAttemptsRef.current++;
-      const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 10000);
+      const delay = Math.min(2000 * Math.pow(2, reconnectAttemptsRef.current), 15000);
       addToast(`Reconnecting in ${Math.round(delay / 1000)}s...`, '');
       reconnectTimerRef.current = setTimeout(() => {
         reconnectTimerRef.current = null;
@@ -429,6 +432,7 @@ export function AppProvider({ children }) {
     return () => {
       if (ws) ws.close();
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (joinTimerRef.current) clearTimeout(joinTimerRef.current);
     };
   }, []);
 
