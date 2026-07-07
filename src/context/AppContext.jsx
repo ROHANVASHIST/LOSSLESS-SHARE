@@ -2,6 +2,24 @@ import { createContext, useContext, useReducer, useCallback, useRef, useEffect }
 
 const AppContext = createContext(null);
 
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem('flashshare_history') || '[]');
+  } catch { return []; }
+}
+
+function saveHistory(items) {
+  try {
+    localStorage.setItem('flashshare_history', JSON.stringify(items.slice(-50)));
+  } catch {}
+}
+
+function loadTheme() {
+  try {
+    return localStorage.getItem('flashshare_theme') || 'dark';
+  } catch { return 'dark'; }
+}
+
 const initialState = {
   screen: 'landing',
   wsReady: false,
@@ -9,9 +27,12 @@ const initialState = {
   currentRoom: null,
   peers: {},
   transfers: [],
-  received: [],
+  received: loadHistory(),
   toasts: [],
   confirmDialog: null,
+  theme: loadTheme(),
+  stats: { sent: 0, received: 0, sentBytes: 0, receivedBytes: 0 },
+  latency: null,
 };
 
 function reducer(state, action) {
@@ -35,8 +56,20 @@ function reducer(state, action) {
     case 'REMOVE_TRANSFER':
       return { ...state, transfers: state.transfers.filter(t => t.id !== action.payload) };
     case 'ADD_RECEIVED':
-      if (state.received.find(r => r.name === action.payload.name)) return state;
-      return { ...state, received: [...state.received, action.payload] };
+      if (state.received.find(r => r.name === action.payload.name && r.size === action.payload.size)) return state;
+      const updated = [...state.received, action.payload];
+      saveHistory(updated);
+      return { ...state, received: updated };
+    case 'CLEAR_RECEIVED':
+      saveHistory([]);
+      return { ...state, received: [] };
+    case 'SET_THEME':
+      try { localStorage.setItem('flashshare_theme', action.payload); } catch {}
+      return { ...state, theme: action.payload };
+    case 'UPDATE_STATS':
+      return { ...state, stats: { ...state.stats, ...action.payload } };
+    case 'SET_LATENCY':
+      return { ...state, latency: action.payload };
     case 'ADD_TOAST':
       return { ...state, toasts: [...state.toasts, action.payload] };
     case 'REMOVE_TOAST':
@@ -68,6 +101,23 @@ export function AppProvider({ children }) {
 
   const clearConfirm = useCallback(() => {
     dispatch({ type: 'SET_CONFIRM', payload: null });
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    const next = state.theme === 'dark' ? 'light' : 'dark';
+    dispatch({ type: 'SET_THEME', payload: next });
+  }, [state.theme]);
+
+  const requestNotification = useCallback(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  const sendBrowserNotification = useCallback((title, body) => {
+    if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+      new Notification(title, { body, icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">⚡</text></svg>' });
+    }
   }, []);
 
   const send = useCallback((msg) => {
@@ -117,6 +167,35 @@ export function AppProvider({ children }) {
   }, [addToast]);
 
   useEffect(() => {
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', state.theme);
+  }, [state.theme]);
+
+  useEffect(() => {
+    requestNotification();
+  }, [requestNotification]);
+
+  const startLatencyCheck = useCallback(() => {
+    let timer;
+    const check = () => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      const start = performance.now();
+      const handler = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'pong') {
+            dispatch({ type: 'SET_LATENCY', payload: Math.round(performance.now() - start) });
+          }
+        } catch {}
+      };
+      wsRef.current.addEventListener('message', handler, { once: true });
+      wsRef.current.send(JSON.stringify({ type: 'ping' }));
+      timer = setTimeout(check, 5000);
+    };
+    timer = setTimeout(check, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${location.host}/ws`;
     let ws;
@@ -179,7 +258,9 @@ export function AppProvider({ children }) {
   return (
     <AppContext.Provider value={{
       state, dispatch, send, addToast, setConfirm, clearConfirm,
-      updatePeers, peersRef, wsRef, subscribe, handleWsMessage
+      updatePeers, peersRef, wsRef, subscribe, handleWsMessage,
+      toggleTheme, requestNotification, sendBrowserNotification,
+      startLatencyCheck,
     }}>
       {children}
     </AppContext.Provider>

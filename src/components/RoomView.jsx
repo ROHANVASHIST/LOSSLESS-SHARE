@@ -1,18 +1,77 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { useWebRTC } from '../hooks/useWebRTC';
+import { generateQR } from '../utils/qrcode';
 import FileUpload from './FileUpload';
 import TransferList from './TransferList';
 import PeerList from './PeerList';
 import ReceivedList from './ReceivedList';
+import ThemeToggle from './ThemeToggle';
 
 export default function RoomView() {
-  const { state, dispatch, send, addToast, setConfirm } = useApp();
-  const { startFileSend, cancelTransfer, cleanupAllPeers } = useWebRTC();
+  const { state, dispatch, send, addToast, setConfirm, toggleTheme, startLatencyCheck } = useApp();
+  const { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll } = useWebRTC();
+  const [showQR, setShowQR] = useState(false);
+  const [qrData, setQrData] = useState('');
+  const [filterText, setFilterText] = useState('');
+  const [roomExpiry, setRoomExpiry] = useState(900);
+  const fileInputRef = useRef(null);
 
-  const handleFiles = useCallback((files) => {
-    Array.from(files).forEach(file => startFileSend(file));
+  useEffect(() => {
+    const unsub = startLatencyCheck?.();
+    return () => unsub?.();
+  }, [startLatencyCheck]);
+
+  useEffect(() => {
+    setRoomExpiry(900);
+    const timer = setInterval(() => {
+      setRoomExpiry(prev => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [state.currentRoom]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape') {
+        setShowQR(false);
+        dispatch({ type: 'SET_CONFIRM', payload: null });
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (showQR && state.currentRoom) {
+      setQrData(generateQR(`${location.origin}?room=${state.currentRoom}`, 240));
+    }
+  }, [showQR, state.currentRoom]);
+
+  const handleFiles = useCallback((files, targetPeerId) => {
+    Array.from(files).forEach(file => startFileSend(file, targetPeerId));
   }, [startFileSend]);
+
+  const handleFilesFromUpload = useCallback((files) => {
+    handleFiles(files);
+  }, [handleFiles]);
+
+  const handlePaste = useCallback(async (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files = [];
+    for (const item of items) {
+      if (item.kind === 'file') files.push(item.getAsFile());
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      handleFiles(files);
+    }
+  }, [handleFiles]);
+
+  useEffect(() => {
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [handlePaste]);
 
   const handleLeave = () => {
     setConfirm('Leave Room', 'Are you sure you want to leave?', () => {
@@ -38,11 +97,40 @@ export default function RoomView() {
       .catch(() => addToast('Failed to copy link', 'error'));
   }, [state.currentRoom, addToast]);
 
+  const cancelAll = useCallback(() => {
+    state.transfers.forEach(t => {
+      if (!t.complete && !t.error) cancelTransfer(t.id);
+    });
+    addToast('All transfers cancelled', '');
+  }, [state.transfers, cancelTransfer, addToast]);
+
+  const handleBroadcast = useCallback(() => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  }, []);
+
+  const onBroadcastFiles = useCallback((e) => {
+    if (e.target.files.length > 0) {
+      broadcastToAll(e.target.files);
+    }
+    e.target.value = '';
+  }, [broadcastToAll]);
+
+  const activeTransfers = useMemo(() =>
+    state.transfers.filter(t => !t.complete && !t.error).length,
+    [state.transfers]
+  );
+
   const peerCount = useMemo(() =>
     Object.values(state.peers).filter(p => p.connected).length,
     [state.peers]
   );
   const hasPeers = peerCount > 0;
+
+  const expiryMinutes = Math.floor(roomExpiry / 60);
+  const expirySeconds = roomExpiry % 60;
+  const expiryStr = `${expiryMinutes}:${String(expirySeconds).padStart(2, '0')}`;
 
   return (
     <div id="app" className="screen">
@@ -58,9 +146,15 @@ export default function RoomView() {
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
               </svg>
             </button>
+            <button onClick={() => setShowQR(true)} className="btn icon-btn" title="Show QR code">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="7" height="7"/><rect x="15" y="2" width="7" height="7"/><rect x="2" y="15" width="7" height="7"/><line x1="15" y1="15" x2="18" y2="15"/><line x1="18" y1="15" x2="18" y2="18"/><line x1="18" y1="21" x2="18" y2="22"/>
+              </svg>
+            </button>
           </div>
         </div>
         <div className="app-actions">
+          <ThemeToggle />
           <a href={`?room=${state.currentRoom}`} onClick={copyShareLink} className="btn small" target="_blank" rel="noreferrer">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
@@ -75,19 +169,65 @@ export default function RoomView() {
       <div className="status-bar">
         <span className={`dot${hasPeers ? ' connected' : ''}`}></span>
         <span>{hasPeers ? 'Connected - share files!' : 'Waiting for peer...'}</span>
-        <span className="status-meta">{hasPeers ? `${peerCount} peer(s)` : ''}</span>
+        <span className="status-meta">
+          {state.latency !== null && <span className="latency-badge" title="Connection latency">{'\u231A'} {state.latency}ms</span>}
+          <span className="expiry-badge" title="Room expires in">{'\u23F1'} {expiryStr}</span>
+          {hasPeers ? `${peerCount} peer(s)` : ''}
+          {state.stats.sent > 0 || state.stats.received > 0 ? (
+            <span className="stats-badge" title="Session stats">
+              {'\u2191'}{state.stats.sent} {'\u2193'}{state.stats.received}
+            </span>
+          ) : ''}
+        </span>
       </div>
 
       <div className="app-layout">
         <div className="main-panel">
-          <FileUpload onFiles={handleFiles} disabled={!hasPeers} />
-          <TransferList onCancel={cancelTransfer} />
+          <FileUpload onFiles={handleFilesFromUpload} disabled={!hasPeers} />
+          {activeTransfers > 1 && (
+            <div className="transfer-actions">
+              <button onClick={cancelAll} className="btn small danger">Cancel All ({activeTransfers})</button>
+              <button onClick={handleBroadcast} className="btn small" title="Send to all peers">Broadcast</button>
+            </div>
+          )}
+          <TransferList onCancel={cancelTransfer} onRetry={retryFileSend} />
         </div>
         <div className="side-panel">
           <PeerList />
-          <ReceivedList />
+          <div className="panel-header" style={{ marginTop: 16 }}>
+            <h3>Received</h3>
+            <span className="badge">{state.received.length}</span>
+          </div>
+          <input
+            type="text"
+            placeholder="Search files..."
+            value={filterText}
+            onChange={e => setFilterText(e.target.value)}
+            className="search-input"
+            autoComplete="off"
+          />
+          <ReceivedList filter={filterText} />
         </div>
       </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        onChange={onBroadcastFiles}
+        style={{ display: 'none' }}
+      />
+
+      {showQR && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowQR(false)}>
+          <div className="modal modal-center">
+            <h3>Scan to Join Room</h3>
+            {qrData && <img src={qrData} alt="QR Code" className="qr-image" />}
+            <p className="qr-hint">Scan with your phone camera to join</p>
+            <button onClick={() => setShowQR(false)} className="btn small">Close</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

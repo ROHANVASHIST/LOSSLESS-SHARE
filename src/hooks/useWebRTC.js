@@ -1,6 +1,7 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { CHUNK_SIZE, MAX_BUFFERED, formatBytes, formatSpeed, getFileIcon, getFileType } from '../utils/helpers';
+import { playCompleteSound } from '../utils/sound';
 
 const PC_CONFIG = {
   iceServers: [
@@ -9,11 +10,15 @@ const PC_CONFIG = {
 };
 
 export function useWebRTC() {
-  const { dispatch, send, addToast, updatePeers, peersRef, subscribe } = useApp();
+  const { dispatch, send, addToast, updatePeers, peersRef, subscribe, sendBrowserNotification } = useApp();
   const incomingFilesRef = useRef(new Map());
   const outgoingFilesRef = useRef(new Map());
 
-  const getActivePeerId = useCallback(() => {
+  const getActivePeerId = useCallback((preferredId) => {
+    if (preferredId) {
+      const peer = peersRef.current.get(preferredId);
+      if (peer?.channel?.readyState === 'open' && !peer.cancelled) return preferredId;
+    }
     for (const [peerId, peer] of peersRef.current) {
       if (peer.channel?.readyState === 'open' && !peer.cancelled) {
         return peerId;
@@ -116,10 +121,17 @@ export function useWebRTC() {
       payload: { name: fileData.name, size: fileData.size, mimeType: fileData.mimeType, url }
     });
 
+    dispatch({
+      type: 'UPDATE_STATS',
+      payload: { received: 1, receivedBytes: fileData.size }
+    });
+
     incomingFilesRef.current.delete(fileData.fileId);
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     addToast(`Received: ${fileData.name}`, 'success');
-  }, [dispatch, addToast]);
+    sendBrowserNotification('FlashShare', `Received: ${fileData.name}`);
+    playCompleteSound();
+  }, [dispatch, addToast, sendBrowserNotification]);
 
   const setupDataChannel = useCallback((channel, peerId) => {
     channel.binaryType = 'arraybuffer';
@@ -218,10 +230,38 @@ export function useWebRTC() {
     }
   }, [peersRef]);
 
-  const startFileSend = useCallback(async (file) => {
-    const activePeerId = getActivePeerId();
+  const calcETA = useCallback((sent, total, speedSamples) => {
+    if (speedSamples.length < 2) return '';
+    const now = performance.now();
+    const recent = speedSamples.filter(s => now - s.time < 2000);
+    if (recent.length < 2) return '';
+    const elapsed = (recent[recent.length - 1].time - recent[0].time) / 1000;
+    if (elapsed <= 0) return '';
+    const bytesPerSec = (recent[recent.length - 1].bytes - recent[0].bytes) / elapsed;
+    if (bytesPerSec <= 0) return '';
+    const remaining = (total - sent) / bytesPerSec;
+    if (remaining < 5) return '';
+    if (remaining < 60) return `${Math.round(remaining)}s`;
+    if (remaining < 3600) return `${Math.floor(remaining / 60)}m ${Math.round(remaining % 60)}s`;
+    return `${Math.floor(remaining / 3600)}h`;
+  }, []);
+
+  const checkDuplicate = useCallback((fileName) => {
+    for (const [, state] of outgoingFilesRef.current) {
+      if (state.file.name === fileName) return true;
+    }
+    return false;
+  }, []);
+
+  const startFileSend = useCallback(async (file, targetPeerId) => {
+    const activePeerId = getActivePeerId(targetPeerId);
     if (!activePeerId) {
       addToast('No peer connected', 'error');
+      return;
+    }
+
+    if (checkDuplicate(file.name)) {
+      addToast(`Duplicate: ${file.name} is already being sent`, 'error');
       return;
     }
 
@@ -242,6 +282,7 @@ export function useWebRTC() {
         id: cardId, direction: 'send', name: file.name, size: file.size,
         mimeType: file.type || 'application/octet-stream', fileType,
         progress: 0, status: 'Starting...', icon, complete: false, error: false,
+        targetPeerId,
       }
     });
 
@@ -292,11 +333,12 @@ export function useWebRTC() {
           }
         }
 
+        const eta = calcETA(end, file.size, sendState.speedSamples);
         dispatch({
           type: 'UPDATE_TRANSFER',
           payload: {
             id: cardId, progress: (end / file.size) * 100,
-            status: `Sending... ${formatBytes(end)} / ${formatBytes(file.size)}${speedStr ? ` (${speedStr})` : ''}`,
+            status: `Sending... ${formatBytes(end)} / ${formatBytes(file.size)}${speedStr ? ` (${speedStr})` : ''}${eta ? ` - ${eta}` : ''}`,
           }
         });
 
@@ -305,7 +347,10 @@ export function useWebRTC() {
 
       if (!sendState.cancelled) {
         dispatch({ type: 'UPDATE_TRANSFER', payload: { id: cardId, progress: 100, status: 'Sent', complete: true } });
+        dispatch({ type: 'UPDATE_STATS', payload: { sent: 1, sentBytes: file.size } });
         addToast(`Sent: ${file.name}`, 'success');
+        sendBrowserNotification('FlashShare', `Sent: ${file.name}`);
+        playCompleteSound();
         setTimeout(() => dispatch({ type: 'REMOVE_TRANSFER', payload: cardId }), 3000);
       }
 
@@ -377,5 +422,30 @@ export function useWebRTC() {
     return unsub;
   }, [subscribe, createPeerConnection, handleOffer, handleAnswer, handleIceCandidate, updatePeers, peersRef]);
 
-  return { startFileSend, cancelTransfer, cleanupAllPeers };
+  const retryFileSend = useCallback(async (transfer) => {
+    if (transfer.direction !== 'send') return;
+    const file = new File([], transfer.name, { type: transfer.mimeType });
+    Object.defineProperty(file, 'size', { value: transfer.size });
+    await startFileSend(file, transfer.targetPeerId);
+  }, [startFileSend]);
+
+  const broadcastToAll = useCallback(async (files) => {
+    const connectedPeers = [];
+    for (const [peerId, peer] of peersRef.current) {
+      if (peer.channel?.readyState === 'open' && !peer.cancelled) {
+        connectedPeers.push(peerId);
+      }
+    }
+    if (connectedPeers.length === 0) {
+      addToast('No peers connected', 'error');
+      return;
+    }
+    for (const file of files) {
+      for (const peerId of connectedPeers) {
+        await startFileSend(file, peerId);
+      }
+    }
+  }, [startFileSend, addToast, peersRef]);
+
+  return { startFileSend, cancelTransfer, cleanupAllPeers, retryFileSend, broadcastToAll };
 }

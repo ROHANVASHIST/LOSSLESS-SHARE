@@ -203,6 +203,9 @@ wss.on('close', () => {
 
 function handleMessage(ws, msg) {
   switch (msg.type) {
+    case 'ping':
+      ws.send(JSON.stringify({ type: 'pong' }));
+      break;
     case 'create': {
       let roomId = msg.roomId;
       if (!roomId || !/^[A-Z0-9]{6}$/.test(roomId)) {
