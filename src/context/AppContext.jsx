@@ -369,7 +369,9 @@ export function AppProvider({ children }) {
 
   useEffect(() => {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${location.host}/ws`;
+    const wsUrl = import.meta.env.DEV
+      ? `${protocol}//${location.hostname}:3000/ws`
+      : `${protocol}//${location.host}/ws`;
     let ws;
 
     function connect() {
