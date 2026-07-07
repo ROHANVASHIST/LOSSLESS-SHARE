@@ -1,6 +1,6 @@
 import { createContext, useContext, useReducer, useCallback, useRef, useEffect } from 'react';
 
-const AppContext = createContext(null);
+export const AppContext = createContext(null);
 
 const TAG_COLORS = ['#4aa3ff', '#22c997', '#f5c542', '#ff4f6e', '#a855f7', '#f97316', '#ec4899', '#06b6d4'];
 
@@ -439,8 +439,4 @@ export function AppProvider({ children }) {
   );
 }
 
-export function useApp() {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useApp must be used within AppProvider');
-  return ctx;
-}
+

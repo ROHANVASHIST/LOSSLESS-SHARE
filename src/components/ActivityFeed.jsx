@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp } from '../hooks/useApp';
 
 const ICONS = {
   'file-sent': '\u2191',

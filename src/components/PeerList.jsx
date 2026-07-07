@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp } from '../hooks/useApp';
 
 export default function PeerList({ onComment, onSendTo }) {
   const { state } = useApp();

@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp } from '../hooks/useApp';
 import { getFileIcon, formatBytes } from '../utils/helpers';
 
 const TAG_COLORS = ['#4aa3ff', '#22c997', '#f5c542', '#ff4f6e', '#a855f7', '#f97316', '#ec4899', '#06b8d4'];

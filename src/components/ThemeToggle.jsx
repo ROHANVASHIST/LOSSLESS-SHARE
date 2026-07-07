@@ -1,4 +1,4 @@
-import { useApp } from '../context/AppContext';
+import { useApp } from '../hooks/useApp';
 
 export default function ThemeToggle() {
   const { state, toggleTheme } = useApp();

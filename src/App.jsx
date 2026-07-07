@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
-import { useApp } from './context/AppContext';
+import { useApp } from './hooks/useApp';
 import Landing from './components/Landing';
 import RoomView from './components/RoomView';
 import Toast from './components/Toast';

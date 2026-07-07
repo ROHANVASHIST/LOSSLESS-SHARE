@@ -1,5 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp } from './useApp';
 import { CHUNK_SIZE, MAX_BUFFERED, formatBytes, formatSpeed, getFileIcon, getFileType } from '../utils/helpers';
 import { playCompleteSound } from '../utils/sound';
 

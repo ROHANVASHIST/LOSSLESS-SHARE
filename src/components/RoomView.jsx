@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp } from '../hooks/useApp';
 import { useWebRTC } from '../hooks/useWebRTC';
 import QRCode from 'qrcode';
 import FileUpload from './FileUpload';
