@@ -5,6 +5,8 @@ import { generateRoomId } from '../utils/helpers';
 export default function Landing() {
   const { send, addToast, state, dispatch } = useApp();
   const [roomCode, setRoomCode] = useState('');
+  const [roomPassword, setRoomPassword] = useState('');
+  const [joinPassword, setJoinPassword] = useState('');
 
   const isConnected = state.wsReady;
 
@@ -20,7 +22,8 @@ export default function Landing() {
       return;
     }
     const id = generateRoomId();
-    send({ type: 'create', roomId: id, expiry: state.linkExpiry });
+    send({ type: 'create', roomId: id, expiry: state.linkExpiry, password: roomPassword || undefined });
+    dispatch({ type: 'SET_ROOM_PASSWORD', payload: roomPassword });
   };
 
   const handleJoin = () => {
@@ -37,7 +40,7 @@ export default function Landing() {
       addToast('Room code must be 6 characters', 'error');
       return;
     }
-    send({ type: 'join', roomId: code });
+    send({ type: 'join', roomId: code, password: joinPassword || undefined });
   };
 
   return (
@@ -63,6 +66,15 @@ export default function Landing() {
           </div>
           <h3>Create Room</h3>
           <p>Start a room and share the code to receive files instantly.</p>
+          <input
+            type="text"
+            placeholder="Room password (optional)"
+            value={roomPassword}
+            onChange={e => setRoomPassword(e.target.value)}
+            className="landing-password-input"
+            autoComplete="off"
+            maxLength={32}
+          />
           <button onClick={handleCreate} className="btn primary" disabled={!isConnected}>
             {!isConnected ? 'Connecting...' : 'Create Room'}
           </button>
@@ -85,6 +97,14 @@ export default function Landing() {
             onKeyDown={e => e.key === 'Enter' && handleJoin()}
             autoComplete="off"
             style={{ textTransform: 'uppercase', letterSpacing: '0.15em', textAlign: 'center', fontWeight: 700 }}
+          />
+          <input
+            type="text"
+            placeholder="Password (if required)"
+            value={joinPassword}
+            onChange={e => setJoinPassword(e.target.value)}
+            className="landing-password-input"
+            autoComplete="off"
           />
           <button onClick={handleJoin} className="btn" disabled={!isConnected}>
             {!isConnected ? 'Connecting...' : 'Join Room'}
