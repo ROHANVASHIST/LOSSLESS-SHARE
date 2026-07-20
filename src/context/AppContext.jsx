@@ -1,4 +1,5 @@
 import { createContext, useContext, useReducer, useCallback, useRef, useEffect } from 'react';
+import { setSoundEnabled } from '../utils/sound';
 
 export const AppContext = createContext(null);
 
@@ -43,20 +44,28 @@ const initialState = {
   wsReady: false,
   myId: null,
   currentRoom: null,
+  roomPassword: '',
   peers: {},
+  peerStats: {},
   transfers: [],
+  pendingSends: [],
+  transferSearch: '',
   received: loadHistory(),
   tags: loadTags(),
   toasts: [],
   confirmDialog: null,
   theme: loadTheme(),
+  autoTheme: false,
   stats: { sent: 0, received: 0, sentBytes: 0, receivedBytes: 0 },
   latency: null,
+  networkType: null,
   viewMode: 'received',
   searchQuery: '',
   searchType: '',
   searchTag: '',
   sortBy: 'date-desc',
+  galleryView: false,
+  transferStatusFilter: 'all',
   bulkMode: false,
   bulkSelected: [],
   activity: [],
@@ -64,6 +73,24 @@ const initialState = {
   pendingRename: null,
   linkExpiry: 60,
   chatMessages: [],
+  speedLimit: 0,
+  downloadSpeedLimit: 0,
+  concurrentLimit: 3,
+  encryptionEnabled: false,
+  clipboardSync: false,
+  autoAccept: false,
+  textSnippets: [],
+  lightbox: null,
+  showEditor: false,
+  imageCompress: false,
+  cleanupDays: 0,
+  showSpeedGraph: false,
+  showEmojiPicker: false,
+  soundEnabled: true,
+  pinnedItems: [],
+  bandwidthTotal: { sent: 0, received: 0 },
+  showPeerInfo: null,
+  contextMenu: null,
 };
 
 function reducer(state, action) {
@@ -82,12 +109,39 @@ function reducer(state, action) {
       return { ...state, peers: action.payload };
     case 'ADD_TRANSFER':
       return { ...state, transfers: [...state.transfers, action.payload] };
+    case 'SET_PENDING_SENDS':
+      return { ...state, pendingSends: action.payload };
     case 'UPDATE_TRANSFER':
       return { ...state, transfers: state.transfers.map(t => t.id === action.payload.id ? { ...t, ...action.payload } : t) };
+    case 'MOVE_TRANSFER': {
+      const t = [...state.transfers];
+      const [from, to] = [action.payload.from, action.payload.to];
+      if (from >= 0 && from < t.length && to >= 0 && to < t.length) {
+        const [item] = t.splice(from, 1);
+        t.splice(to, 0, item);
+      }
+      return { ...state, transfers: t };
+    }
     case 'REMOVE_TRANSFER':
       return { ...state, transfers: state.transfers.filter(t => t.id !== action.payload) };
     case 'ADD_RECEIVED': {
-      const withMeta = { ...action.payload, tags: [], favorite: false, trashed: false, trashedAt: null, receivedAt: Date.now(), comments: [], note: action.payload.note || '' };
+      let name = action.payload.name;
+      const existing = state.received.filter(r => r.name === name && !r.trashed);
+      if (existing.length > 0) {
+        const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
+        const base = ext ? name.slice(0, -ext.length) : name;
+        name = `${base}_v${existing.length + 1}${ext}`;
+      }
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      const AUTO_TAG_DEFS = { image: { name: 'Image', color: '#4aa3ff' }, video: { name: 'Video', color: '#22c997' }, audio: { name: 'Audio', color: '#f5c542' }, pdf: { name: 'Document', color: '#ff4f6e' }, doc: { name: 'Document', color: '#ff4f6e' }, docx: { name: 'Document', color: '#ff4f6e' }, zip: { name: 'Archive', color: '#a855f7' }, rar: { name: 'Archive', color: '#a855f7' }, '7z': { name: 'Archive', color: '#a855f7' }, js: { name: 'Code', color: '#f97316' }, ts: { name: 'Code', color: '#f97316' }, py: { name: 'Code', color: '#f97316' }, java: { name: 'Code', color: '#f97316' }, html: { name: 'Code', color: '#f97316' }, css: { name: 'Code', color: '#f97316' }, json: { name: 'Code', color: '#f97316' } };
+      const autoTag = AUTO_TAG_DEFS[ext] || null;
+      let autoTagId = null;
+      if (autoTag) {
+        const existingTag = state.tags.find(t => t.name === autoTag.name);
+        if (existingTag) { autoTagId = existingTag.id; }
+      }
+      const tags = autoTagId ? [autoTagId] : [];
+      const withMeta = { ...action.payload, name, tags, favorite: false, trashed: false, trashedAt: null, receivedAt: Date.now(), comments: [], note: action.payload.note || '', pinned: false, metadata: null };
       const updated = [...state.received, withMeta];
       saveHistory(updated);
       return { ...state, received: updated };
@@ -200,6 +254,8 @@ function reducer(state, action) {
       return { ...state, searchTag: action.payload };
     case 'SET_SORT':
       return { ...state, sortBy: action.payload };
+    case 'SET_GALLERY_VIEW':
+      return { ...state, galleryView: action.payload };
     case 'TOGGLE_BULK_MODE':
       return { ...state, bulkMode: !state.bulkMode, bulkSelected: [] };
     case 'TOGGLE_BULK_ITEM': {
@@ -224,6 +280,11 @@ function reducer(state, action) {
       return { ...state, activity: [{ ...action.payload, id: Date.now() + Math.random(), ts: Date.now() }, ...state.activity].slice(0, 100) };
     case 'ADD_TO_SHARED_HISTORY':
       return { ...state, sharedHistory: [{ ...action.payload, id: Date.now() + Math.random() }, ...state.sharedHistory].slice(0, 200) };
+    case 'ADD_AUDIT_LOG': {
+      const log = [...(state.auditLog || []), { ...action.payload, ts: Date.now() }].slice(-500);
+      try { localStorage.setItem('flashshare_audit', JSON.stringify(log)); } catch {}
+      return { ...state, auditLog: log };
+    }
     case 'CLEAR_SHARED_HISTORY':
       return { ...state, sharedHistory: [] };
     case 'SET_PENDING_RENAME':
@@ -251,6 +312,115 @@ function reducer(state, action) {
       return { ...state, linkExpiry: action.payload };
     case 'ADD_CHAT_MESSAGE':
       return { ...state, chatMessages: [...state.chatMessages, action.payload].slice(-200) };
+    case 'SET_SPEED_LIMIT':
+      return { ...state, speedLimit: action.payload };
+    case 'SET_DOWNLOAD_SPEED_LIMIT':
+      return { ...state, downloadSpeedLimit: action.payload };
+    case 'SET_ENCRYPTION':
+      return { ...state, encryptionEnabled: action.payload };
+    case 'SET_CLIPBOARD_SYNC':
+      return { ...state, clipboardSync: action.payload };
+    case 'ADD_TEXT_SNIPPET':
+      return { ...state, textSnippets: [...state.textSnippets, action.payload].slice(-50) };
+    case 'SET_LIGHTBOX':
+      return { ...state, lightbox: action.payload };
+    case 'SET_SHOW_EDITOR':
+      return { ...state, showEditor: action.payload };
+    case 'SET_SHOW_EMOJI_PICKER':
+      return { ...state, showEmojiPicker: action.payload };
+    case 'ADD_FILE_VERSION': {
+      const r = state.received.map(item =>
+        item.name === action.payload.name && item.size === action.payload.size
+          ? { ...item, versions: [...(item.versions || []), action.payload.version] }
+          : item
+      );
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'UPDATE_RECEIVED_ITEM': {
+      const r = state.received.map(item =>
+        item.name === action.payload.name && item.size === action.payload.size
+          ? { ...item, ...action.payload.updates }
+          : item
+      );
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'SET_ROOM_PASSWORD':
+      return { ...state, roomPassword: action.payload };
+    case 'SET_AUTO_THEME':
+      return { ...state, autoTheme: action.payload };
+    case 'SET_NETWORK_TYPE':
+      return { ...state, networkType: action.payload };
+    case 'SET_AUTO_ACCEPT':
+      return { ...state, autoAccept: action.payload };
+    case 'SET_CONCURRENT_LIMIT':
+      return { ...state, concurrentLimit: action.payload };
+    case 'SET_IMAGE_COMPRESS':
+      return { ...state, imageCompress: action.payload };
+    case 'SET_CLEANUP_DAYS':
+      return { ...state, cleanupDays: action.payload };
+    case 'SET_TRANSFER_SEARCH':
+      return { ...state, transferSearch: action.payload };
+    case 'SET_TRANSFER_STATUS_FILTER':
+      return { ...state, transferStatusFilter: action.payload };
+    case 'SET_SHOW_SPEED_GRAPH':
+      return { ...state, showSpeedGraph: action.payload };
+    case 'SET_SOUND_ENABLED':
+      return { ...state, soundEnabled: action.payload };
+    case 'CLEANUP_OLD_FILES': {
+      const cutoff = Date.now() - action.payload * 24 * 60 * 60 * 1000;
+      const r = state.received.filter(item => !item.trashed || (item.trashedAt && item.trashedAt > cutoff));
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'SET_PINNED': {
+      const key = `${action.payload.name}|${action.payload.size}`;
+      const pinned = state.pinnedItems.includes(key)
+        ? state.pinnedItems.filter(k => k !== key)
+        : [...state.pinnedItems, key];
+      try { localStorage.setItem('flashshare_pinned', JSON.stringify(pinned)); } catch {}
+      return { ...state, pinnedItems: pinned };
+    }
+    case 'TOGGLE_RECEIVED_PIN': {
+      const key = `${action.payload.name}|${action.payload.size}`;
+      const pinned = state.pinnedItems.includes(key)
+        ? state.pinnedItems.filter(k => k !== key)
+        : [...state.pinnedItems, key];
+      try { localStorage.setItem('flashshare_pinned', JSON.stringify(pinned)); } catch {}
+      return { ...state, pinnedItems: pinned };
+    }
+    case 'BULK_PIN': {
+      const keys = action.payload.map(p => `${p.name}|${p.size}`);
+      const pinned = [...new Set([...state.pinnedItems, ...keys])];
+      try { localStorage.setItem('flashshare_pinned', JSON.stringify(pinned)); } catch {}
+      return { ...state, pinnedItems: pinned };
+    }
+    case 'UPDATE_BANDWIDTH':
+      return { ...state, bandwidthTotal: { ...state.bandwidthTotal, ...action.payload } };
+    case 'SET_PEER_INFO':
+      return { ...state, showPeerInfo: action.payload };
+    case 'SET_PEER_STATS':
+      return { ...state, peerStats: { ...state.peerStats, ...action.payload } };
+    case 'SET_CONTEXT_MENU':
+      return { ...state, contextMenu: action.payload };
+    case 'RENAME_RECEIVED': {
+      const r = state.received.map(item =>
+        item.name === action.payload.name && item.size === action.payload.size
+          ? { ...item, name: action.payload.newName } : item
+      );
+      saveHistory(r);
+      return { ...state, received: r };
+    }
+    case 'BULK_RENAME': {
+      const updates = new Map(action.payload.map(p => [`${p.name}|${p.size}`, p.newName]));
+      const r = state.received.map(item => {
+        const key = `${item.name}|${item.size}`;
+        return updates.has(key) ? { ...item, name: updates.get(key) } : item;
+      });
+      saveHistory(r);
+      return { ...state, received: r, bulkMode: false, bulkSelected: [] };
+    }
     default:
       return state;
   }
@@ -350,6 +520,30 @@ export function AppProvider({ children }) {
     requestNotification();
   }, [requestNotification]);
 
+  useEffect(() => {
+    setSoundEnabled(state.soundEnabled);
+  }, [state.soundEnabled]);
+
+  useEffect(() => {
+    if (!state.autoTheme) return;
+    const hour = new Date().getHours();
+    const desired = hour >= 19 || hour < 7 ? 'dark' : 'light';
+    if (desired !== state.theme) {
+      try { localStorage.setItem('flashshare_theme', desired); } catch {}
+      document.documentElement.setAttribute('data-theme', desired);
+    }
+    const timer = setInterval(() => {
+      const h = new Date().getHours();
+      const d = h >= 19 || h < 7 ? 'dark' : 'light';
+      if (d !== (localStorage.getItem('flashshare_theme') || 'dark')) {
+        try { localStorage.setItem('flashshare_theme', d); } catch {}
+        document.documentElement.setAttribute('data-theme', d);
+        dispatch({ type: 'SET_THEME', payload: d });
+      }
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [state.autoTheme]);
+
   const startLatencyCheck = useCallback(() => {
     let timer;
     const check = () => {
@@ -389,8 +583,9 @@ export function AppProvider({ children }) {
         const params = new URLSearchParams(location.search);
         const room = params.get('room');
         if (room) {
+          const pwd = params.get('p') || '';
           joinTimerRef.current = setTimeout(() => {
-            send({ type: 'join', roomId: room.toUpperCase() });
+            send({ type: 'join', roomId: room.toUpperCase(), password: pwd });
             joinTimerRef.current = null;
           }, 500);
         }
