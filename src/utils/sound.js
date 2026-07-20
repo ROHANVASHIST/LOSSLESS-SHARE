@@ -1,4 +1,11 @@
+let soundEnabled = true;
+
+export function setSoundEnabled(enabled) {
+  soundEnabled = enabled;
+}
+
 export function playCompleteSound() {
+  if (!soundEnabled) return;
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();
