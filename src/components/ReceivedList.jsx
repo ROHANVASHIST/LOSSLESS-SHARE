@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useApp } from '../hooks/useApp';
-import { getFileIcon, formatBytes } from '../utils/helpers';
+import { getFileIcon, formatBytes, downloadAsZip } from '../utils/helpers';
 
 const TAG_COLORS = ['#4aa3ff', '#22c997', '#f5c542', '#ff4f6e', '#a855f7', '#f97316', '#ec4899', '#06b8d4'];
 
@@ -11,6 +11,10 @@ export default function ReceivedList({ onComment }) {
   const [showNewTag, setShowNewTag] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState(TAG_COLORS[0]);
+  const [renameItem, setRenameItem] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [editNoteItem, setEditNoteItem] = useState(null);
+  const [editNoteValue, setEditNoteValue] = useState('');
 
   const viewMode = state.viewMode || 'received';
   const searchQuery = state.searchQuery || '';
@@ -23,6 +27,10 @@ export default function ReceivedList({ onComment }) {
 
     if (viewMode === 'received') list = list.filter(i => !i.trashed);
     else if (viewMode === 'favorites') list = list.filter(i => i.favorite && !i.trashed);
+    else if (viewMode === 'pinned') {
+      const pinnedKeys = state.pinnedItems || [];
+      list = list.filter(i => pinnedKeys.includes(`${i.name}|${i.size}`) && !i.trashed);
+    }
     else if (viewMode === 'trash') list = list.filter(i => i.trashed);
     else if (viewMode === 'recent') {
       const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
@@ -104,6 +112,31 @@ export default function ReceivedList({ onComment }) {
     dispatch({ type: 'REMOVE_TAG_DEF', payload: tagId });
   }, [dispatch]);
 
+  const handleRenameItem = useCallback((item) => {
+    setRenameItem(`${item.name}|${item.size}`);
+    setRenameValue(item.name);
+  }, []);
+
+  const handleRenameSubmit = useCallback((item) => {
+    if (renameValue.trim() && renameValue.trim() !== item.name) {
+      dispatch({ type: 'RENAME_RECEIVED', payload: { name: item.name, size: item.size, newName: renameValue.trim() } });
+      addToast(`Renamed to ${renameValue.trim()}`, 'success');
+    }
+    setRenameItem(null);
+    setRenameValue('');
+  }, [renameValue, dispatch, addToast]);
+
+  const handleEditNote = useCallback((item) => {
+    setEditNoteItem(`${item.name}|${item.size}`);
+    setEditNoteValue(item.note || '');
+  }, []);
+
+  const handleSaveNote = useCallback((item) => {
+    dispatch({ type: 'UPDATE_RECEIVED_ITEM', payload: { name: item.name, size: item.size, updates: { note: editNoteValue.trim() } } });
+    setEditNoteItem(null);
+    addToast('Note updated', 'success');
+  }, [editNoteValue, dispatch, addToast]);
+
   const handleBulkSelect = useCallback((item, e) => {
     e.stopPropagation();
     dispatch({ type: 'TOGGLE_BULK_ITEM', payload: { name: item.name, size: item.size } });
@@ -139,7 +172,7 @@ export default function ReceivedList({ onComment }) {
     <>
       <div className="received-toolbar">
         <div className="received-tabs">
-          {['received', 'favorites', 'recent', 'trash'].map(mode => (
+          {['received', 'favorites', 'pinned', 'recent', 'trash'].map(mode => (
             <button
               key={mode}
               className={`tab-btn ${viewMode === mode ? 'active' : ''}`}
@@ -147,11 +180,34 @@ export default function ReceivedList({ onComment }) {
             >
               {mode === 'received' && 'All'}
               {mode === 'favorites' && '\u2605'}
+              {mode === 'pinned' && '\u{1F4CC}'}
               {mode === 'recent' && 'Recent'}
               {mode === 'trash' && 'Trash'}
             </button>
           ))}
         </div>
+        {viewMode !== 'trash' && items.filter(i => i.url).length > 1 && (
+          <button
+            className="tab-btn"
+            onClick={() => {
+              const downloadable = items.filter(i => i.url);
+              if (downloadable.length > 0) {
+                downloadAsZip(downloadable, `flashshare-${Date.now()}.zip`);
+                addToast(`Downloading ${downloadable.length} files as ZIP`, 'success');
+              }
+            }}
+            title="Download all as ZIP"
+          >
+            {'\u{1F4E6}'} ZIP
+          </button>
+        )}
+        <button
+          className={`tab-btn ${state.galleryView ? 'active' : ''}`}
+          onClick={() => dispatch({ type: 'SET_GALLERY_VIEW', payload: !state.galleryView })}
+          title="Toggle gallery view"
+        >
+          {state.galleryView ? '\u2630' : '\u25A6'}
+        </button>
         <button
           className={`tab-btn bulk-toggle ${state.bulkMode ? 'active' : ''}`}
           onClick={() => dispatch({ type: 'TOGGLE_BULK_MODE' })}
@@ -212,6 +268,21 @@ export default function ReceivedList({ onComment }) {
         )}
       </div>
 
+      {state.bulkMode && (
+        <div className="bulk-bar-select">
+          <button className="btn small" onClick={() => {
+            const allKeys = items.map(i => ({ name: i.name, size: i.size }));
+            const alreadyAll = allKeys.every(k => state.bulkSelected.some(s => s.name === k.name && s.size === k.size));
+            if (alreadyAll) {
+              dispatch({ type: 'CLEAR_BULK' });
+            } else {
+              allKeys.forEach(k => dispatch({ type: 'TOGGLE_BULK_ITEM', payload: k }));
+            }
+          }}>
+            {items.every(i => state.bulkSelected.some(s => s.name === i.name && s.size === i.size)) ? 'Deselect All' : 'Select All'}
+          </button>
+        </div>
+      )}
       {state.bulkMode && activeBulkCount > 0 && (
         <div className="bulk-bar">
           <span className="bulk-count">{activeBulkCount} selected</span>
@@ -238,10 +309,10 @@ export default function ReceivedList({ onComment }) {
         </div>
       )}
 
-      <div className="received-list">
+      <div className={`received-list${state.galleryView ? ' gallery-view' : ''}`}>
         {items.length === 0 ? (
           <div className="peer-placeholder">
-            {viewMode === 'trash' ? 'Trash is empty' : viewMode === 'favorites' ? 'No starred files' : viewMode === 'recent' ? 'Nothing shared today' : searchQuery ? 'No matching files' : 'No files received yet'}
+            {viewMode === 'trash' ? 'Trash is empty' : viewMode === 'favorites' ? 'No starred files yet.\nStar files to find them quickly!' : viewMode === 'pinned' ? 'No pinned files.\nPin files to keep them accessible!' : viewMode === 'recent' ? 'Nothing shared today' : searchQuery ? 'No matching files' : 'No files received yet.\nShare files to get started!'}
           </div>
         ) : (
           items.map((item, i) => {
@@ -251,7 +322,16 @@ export default function ReceivedList({ onComment }) {
               <div
                 key={`${item.name}-${item.size}-${i}`}
                 className={`received-item${item.favorite ? ' starred' : ''}${isSelected ? ' selected' : ''}`}
-                onClick={() => !state.bulkMode && item.url && window.open(item.url, '_blank')}
+                onClick={() => {
+                  if (state.bulkMode) return;
+                  if (item.url && item.mimeType?.startsWith('image/')) {
+                    const images = state.received.filter(r => !r.trashed && r.url && r.mimeType?.startsWith('image/'));
+                    const idx = images.findIndex(r => r.name === item.name && r.size === item.size);
+                    dispatch({ type: 'SET_LIGHTBOX', payload: { images: images.map(r => ({ url: r.url, name: r.name })), startIndex: Math.max(0, idx) } });
+                  } else if (item.url) {
+                    window.open(item.url, '_blank');
+                  }
+                }}
               >
                 <div className="received-item-top">
                   {state.bulkMode && (
@@ -264,7 +344,23 @@ export default function ReceivedList({ onComment }) {
                     />
                   )}
                   <span className="received-item-icon">{getFileIcon(item.mimeType, item.name)}</span>
-                  <span className="received-item-name" title={item.name}>{item.name}</span>
+                  {renameItem === `${item.name}|${item.size}` ? (
+                    <input
+                      type="text"
+                      className="rename-inline-input"
+                      value={renameValue}
+                      onChange={e => setRenameValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleRenameSubmit(item);
+                        if (e.key === 'Escape') { setRenameItem(null); setRenameValue(''); }
+                      }}
+                      onBlur={() => handleRenameSubmit(item)}
+                      autoFocus
+                      onClick={e => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span className="received-item-name" title={item.name}>{item.name}</span>
+                  )}
                   <span className="received-item-size">{formatBytes(item.size)}</span>
                   <button
                     className={`star-btn ${item.favorite ? 'active' : ''}`}
@@ -276,6 +372,16 @@ export default function ReceivedList({ onComment }) {
                 </div>
                 <div className="received-item-meta">
                   <span className="tag">{ext}</span>
+                  {item.relativePath && (
+                    <span className="folder-badge" title={item.relativePath}>
+                      {'\u{1F4C1}'}{item.relativePath.split('/').slice(0, -1).join('/') || '/'}
+                    </span>
+                  )}
+                  {(item.versions || []).length > 0 && (
+                    <span className="version-badge" title={`${(item.versions || []).length + 1} versions`}>
+                      v{(item.versions || []).length + 1}
+                    </span>
+                  )}
                   {(item.tags || []).length > 0 && (
                     <div className="item-tags">
                       {(item.tags || []).map(tagId => {
@@ -319,6 +425,7 @@ export default function ReceivedList({ onComment }) {
                               )}
                             </div>
                             <button className="action-btn" onClick={e => { e.stopPropagation(); setCommentInput(commentInput === `${item.name}|${item.size}` ? null : `${item.name}|${item.size}`); }} title="Comment">{'\uD83D\uDCAC'}</button>
+                            <button className="action-btn" onClick={e => { e.stopPropagation(); handleRenameItem(item); }} title="Rename">{'\u270F\uFE0F'}</button>
                             <button className="action-btn danger" onClick={e => handleTrash(item, e)} title="Trash">{'\uD83D\uDDD1'}</button>
                           </>
                         )}
@@ -326,9 +433,30 @@ export default function ReceivedList({ onComment }) {
                     )}
                   </div>
                 </div>
-                {item.note && (
+                {editNoteItem === `${item.name}|${item.size}` ? (
+                  <div className="item-note-edit" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      value={editNoteValue}
+                      onChange={e => setEditNoteValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleSaveNote(item);
+                        if (e.key === 'Escape') setEditNoteItem(null);
+                      }}
+                      onBlur={() => handleSaveNote(item)}
+                      autoFocus
+                      placeholder="Add a note..."
+                      className="note-edit-input"
+                    />
+                  </div>
+                ) : item.note ? (
                   <div className="item-note" onClick={e => e.stopPropagation()}>
                     {'\uD83D\uDCCB'} {item.note}
+                    <button className="note-edit-btn" onClick={e => { e.stopPropagation(); handleEditNote(item); }} title="Edit note">{'\u270F\uFE0F'}</button>
+                  </div>
+                ) : !state.bulkMode && viewMode !== 'trash' && (
+                  <div className="item-note-add" onClick={e => { e.stopPropagation(); handleEditNote(item); }}>
+                    + Add note
                   </div>
                 )}
                 {(item.comments || []).length > 0 && (
