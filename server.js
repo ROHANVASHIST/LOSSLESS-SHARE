@@ -38,8 +38,9 @@ const MIME_TYPES = {
 };
 
 class Room {
-  constructor(id, expiryMinutes = 15) {
+  constructor(id, expiryMinutes = 15, password = '') {
     this.id = id;
+    this.password = password;
     this.participants = [];
     this.createdAt = Date.now();
     this.expiryMs = expiryMinutes * 60 * 1000;
@@ -217,10 +218,10 @@ function handleMessage(ws, msg) {
         return;
       }
       const expiryMin = Math.max(1, Math.min(1440, msg.expiry || 15));
-      ws.room = rooms.get(roomId) || new Room(roomId, expiryMin);
+      ws.room = rooms.get(roomId) || new Room(roomId, expiryMin, msg.password || '');
       ws.room.add(ws);
       rooms.set(roomId, ws.room);
-      ws.send(JSON.stringify({ type: 'room-created', roomId, expiry: expiryMin }));
+      ws.send(JSON.stringify({ type: 'room-created', roomId, expiry: expiryMin, hasPassword: !!msg.password }));
       break;
     }
 
@@ -233,6 +234,10 @@ function handleMessage(ws, msg) {
       const room = rooms.get(roomId);
       if (!room) {
         ws.send(JSON.stringify({ type: 'error', message: 'Room not found. It may have expired.' }));
+        return;
+      }
+      if (room.password && msg.password !== room.password) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Incorrect room password' }));
         return;
       }
       if (room.participants.length >= 10) {
